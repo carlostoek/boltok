@@ -2,6 +2,7 @@
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
+from sqlalchemy import inspect
 from .base import Base
 from utils.config import Config
 
@@ -15,9 +16,6 @@ TABLES_ORDER = [
     'achievements',
     'story_fragments',
     'narrative_choices', 
-    'user_narrative_states',
-    'story_fragments',
-    'narrative_choices',
     'user_narrative_states',
     'rewards',
     'lore_pieces',
@@ -73,11 +71,26 @@ async def init_db():
                 echo=False, 
                 poolclass=NullPool
             )
+        
         async with _engine.begin() as conn:
-            logger.info("Creando tablas...")
-            tables = [Base.metadata.tables[name] for name in TABLES_ORDER]
-            await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables))
-            logger.info("Tablas creadas exitosamente")
+            # Verificar qué tablas ya existen
+            inspector = inspect(await conn.get_sync_connection())
+            existing_tables = inspector.get_table_names()
+            
+            # Filtrar solo las tablas que necesitamos crear
+            tables_to_create = [
+                table for table in TABLES_ORDER 
+                if table not in existing_tables
+            ]
+            
+            if tables_to_create:
+                logger.info(f"Creando tablas: {', '.join(tables_to_create)}")
+                tables = [Base.metadata.tables[name] for name in tables_to_create]
+                await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables))
+                logger.info(f"Tablas creadas exitosamente: {', '.join(tables_to_create)}")
+            else:
+                logger.info("Todas las tablas ya existen, no se requiere creación")
+                
         return _engine
     except Exception as e:
         logger.critical(f"Error crítico en init_db: {str(e)}")
