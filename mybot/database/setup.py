@@ -1,7 +1,7 @@
+# database/setup.py
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
-from sqlalchemy import inspect, text
 from .base import Base
 from utils.config import Config
 
@@ -10,56 +10,91 @@ logger = logging.getLogger(__name__)
 _engine = None
 _sessionmaker = None
 
+TABLES_ORDER = [
+    'users',
+    'achievements',
+    'story_fragments',
+    'narrative_choices', 
+    'user_narrative_states',
+    'story_fragments',
+    'narrative_choices',
+    'user_narrative_states',
+    'rewards',
+    'lore_pieces',
+    'missions',
+    'events',
+    'raffles',
+    'badges',
+    'levels',
+    'invite_tokens',
+    'subscription_plans',
+    'subscription_tokens',
+    'tariffs',
+    'config_entries',
+    'bot_config',
+    'channels',
+    'pending_channel_requests',
+    'challenges',
+    'auctions',
+    'trivias',
+    'user_rewards',
+    'user_achievements',
+    'user_mission_entries',
+    'raffle_entries',
+    'user_badges',
+    'vip_subscriptions',
+    'user_stats',
+    'tokens',
+    'user_challenge_progress',
+    'button_reactions',
+    'bids',
+    'auction_participants',
+    'minigame_play',
+    'user_lore_pieces',
+    'trivia_questions',
+    'trivia_attempts',
+    'trivia_user_answers',
+]
+
 async def init_db():
-    global _engine, _sessionmaker
+    global _engine
     try:
-        logger.info("Initializing PostgreSQL connection with SQLAlchemy...")
+        logger.info("Creando motor de base de datos...")
         
-        # CRITICAL FIX: Use NullPool for Railway environment
-        _engine = create_async_engine(
-            Config.DATABASE_URL,
-            echo=True,
-            poolclass=NullPool,  # Essential for Railway's connection handling
-            connect_args={
-                "timeout": 10,  # Match our successful test
-                "server_settings": {
-                    "application_name": "gamification-bot"
-                }
-            }
-        )
-        
-        # Verify connection
-        async with _engine.connect() as conn:
-            result = await conn.execute(text("SELECT version()"))
-            version = result.scalar()
-            logger.info(f"✅ SQLAlchemy connected to PostgreSQL {version}")
-        
-        # Create tables
-        async with _engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            logger.info("Tables created successfully")
+        # Verificar y corregir DATABASE_URL si es necesario
+        db_url = Config.DATABASE_URL
+        if db_url.startswith("postgres"):
+            logger.warning("PostgreSQL detectado pero no disponible, cambiando a SQLite")
+            db_url = "sqlite+aiosqlite:///gamification.db"
             
-        _sessionmaker = async_sessionmaker(
-            bind=_engine,
-            expire_on_commit=False,
-            class_=AsyncSession,
-            autoflush=False  # Prevent premature flushes
-        )
-        
+        if _engine is None:
+            _engine = create_async_engine(
+                db_url, 
+                echo=False, 
+                poolclass=NullPool
+            )
+        async with _engine.begin() as conn:
+            logger.info("Creando tablas...")
+            tables = [Base.metadata.tables[name] for name in TABLES_ORDER]
+            await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables))
+            logger.info("Tablas creadas exitosamente")
         return _engine
     except Exception as e:
-        logger.critical(f"SQLAlchemy connection failed: {str(e)}")
+        logger.critical(f"Error crítico en init_db: {str(e)}")
         raise
 
 def get_session_factory():
-    if not _sessionmaker:
-        raise RuntimeError("Call init_db() first")
+    global _sessionmaker
+    if _engine is None:
+        raise RuntimeError("Database engine not initialized. Call init_db first.")
+    if _sessionmaker is None:
+        _sessionmaker = async_sessionmaker(
+            bind=_engine, 
+            expire_on_commit=False,
+            class_=AsyncSession
+        )
     return _sessionmaker
 
-async def close_db():
-    global _engine, _sessionmaker
-    if _engine:
-        await _engine.dispose()
-        _engine = None
-        _sessionmaker = None
-        logger.info("PostgreSQL connection closed")
+async def get_session() -> AsyncSession:
+    session_factory = get_session_factory()
+    return session_factory()
