@@ -1,5 +1,4 @@
 # database/__init__.py
-from .models import User
-from .narrative_models import UserNarrativeState
+from .setup import init_db, get_session_factory, close_db
 
-__all__ = ['User', 'UserNarrativeState']
+__all__ = ['init_db', 'get_session_factory', 'close_db']
